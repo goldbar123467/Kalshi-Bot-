@@ -1,0 +1,6 @@
+/target
+.env
+*.pem
+logs/*.log
+brain/ledger.md.bak
+brain/stats.md.tmp
