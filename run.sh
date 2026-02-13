@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Two-shot pattern: runs twice per 15-min market, then sleeps until the next one.
-#   Shot 1 — :XX:20  → enter a trade if there's edge
-#   Shot 2 — :XX:65  → manage position (sell/hold) 45s later, ONLY if shot 1 traded
+#   Shot 1 — :XX:90  → enter a trade once orderbook has formed
+#   Shot 2 — :XX:135 → manage position (sell/hold) 45s later, ONLY if shot 1 traded
 # Usage: systemd or nohup ./run.sh &
 
 cd "$(dirname "$0")"
@@ -10,7 +10,7 @@ cd "$(dirname "$0")"
 unset OPENROUTER_API_KEY 2>/dev/null
 
 export RUST_LOG=info
-OFFSET=20   # seconds after each 15-min boundary
+OFFSET=90   # seconds after each 15-min boundary
 FOLLOWUP=45 # seconds between shot 1 and shot 2
 LOG="logs/cron.log"
 
