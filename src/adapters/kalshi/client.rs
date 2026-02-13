@@ -188,9 +188,13 @@ impl Exchange for KalshiClient {
             Side::Yes => "yes",
             Side::No => "no",
         };
+        let action_str = match order.action {
+            OrderAction::Buy => "buy",
+            OrderAction::Sell => "sell",
+        };
         let body = serde_json::json!({
             "ticker": order.ticker,
-            "action": "buy",
+            "action": action_str,
             "side": side_str,
             "count": order.shares,
             "type": "limit",
@@ -212,13 +216,13 @@ impl Exchange for KalshiClient {
         Ok(resp
             .market_positions
             .into_iter()
-            .filter(|p| p.market_exposure.unwrap_or(0) != 0)
+            .filter(|p| p.position.unwrap_or(0) != 0)
             .map(|p| {
-                let exposure = p.market_exposure.unwrap_or(0);
+                let pos = p.position.unwrap_or(0);
                 Position {
                     ticker: p.ticker,
-                    side: if exposure > 0 { Side::Yes } else { Side::No },
-                    count: exposure.unsigned_abs() as u32,
+                    side: if pos > 0 { Side::Yes } else { Side::No },
+                    count: pos.unsigned_abs() as u32,
                 }
             })
             .collect())

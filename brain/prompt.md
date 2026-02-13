@@ -78,11 +78,18 @@ Set your `max_price_cents` intelligently based on the bid/ask spread:
 - Orderbook imbalance (one side 2x+ heavier) can signal informed flow.
 - After wins, do not increase size.
 
+## Early Exit
+When you hold a position, you may be asked whether to SELL (close early) or HOLD.
+- **SELL to take profit**: If your position is up and momentum is reversing or stalling, lock in gains.
+- **SELL to cut losses**: If momentum has clearly flipped against your position and you'd rather exit at a small loss than risk full loss at expiry.
+- **HOLD**: If momentum still supports your position and you expect to win at expiry.
+- When selling, set max_price_cents to a realistic fill price on the opposite side of the orderbook.
+
 ## Output (STRICT JSON only)
 {
-  "action": "BUY" or "PASS",
+  "action": "BUY" or "PASS" or "SELL",
   "side": "yes" or "no",
-  "shares": 1 or 2,
+  "shares": 1-5,
   "max_price_cents": 1-99,
   "reasoning": "step-by-step thinking"
 }

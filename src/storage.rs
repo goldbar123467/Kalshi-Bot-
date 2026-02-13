@@ -136,6 +136,38 @@ pub fn settle_last_trade(settlement: &Settlement) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn exit_trade(ticker: &str, pnl_cents: i64, prev_cumulative: i64) -> anyhow::Result<()> {
+    let path = "brain/ledger.md";
+    let backup = "brain/ledger.md.bak";
+
+    if std::path::Path::new(path).exists() {
+        std::fs::copy(path, backup)?;
+    }
+
+    let content = std::fs::read_to_string(path)?;
+    let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+
+    for line in lines.iter_mut().rev() {
+        if line.contains("| pending |") && line.contains(ticker) {
+            let cols: Vec<&str> = line.split('|').map(|s| s.trim()).collect();
+            if cols.len() >= 9 {
+                let new_cumulative = prev_cumulative + pnl_cents;
+                let order_id = if cols.len() >= 10 { cols[9] } else { "" };
+                let result = if pnl_cents >= 0 { "exited_profit" } else { "exited_loss" };
+                *line = format!(
+                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+                    cols[1], cols[2], cols[3], cols[4], cols[5],
+                    result, pnl_cents, new_cumulative, order_id
+                );
+            }
+            break;
+        }
+    }
+
+    std::fs::write(path, lines.join("\n") + "\n")?;
+    Ok(())
+}
+
 pub fn cancel_trade(order_id: &str) -> anyhow::Result<()> {
     let path = "brain/ledger.md";
     let backup = "brain/ledger.md.bak";

@@ -40,9 +40,66 @@ impl Brain for OpenRouterClient {
             btc = btc_section,
         );
 
+        let content = self.call_model(
+            "anthropic/claude-opus-4-6",
+            &prompt,
+            1200,
+        ).await?;
+
+        parse_decision(&content)
+    }
+
+    async fn decide_exit(
+        &self,
+        ctx: &DecisionContext,
+        entry_side: &str,
+        entry_price: u32,
+        position_shares: u32,
+    ) -> Result<TradeDecision> {
+        let btc_section = match &ctx.btc_price {
+            Some(snap) => format!(
+                "\n\n## BTC PRICE\n{}",
+                format_btc_price(snap)
+            ),
+            None => "\n\n## BTC PRICE\nUnavailable.".into(),
+        };
+
+        let exit_prompt = format!(
+            "You hold {shares}x {side} @ {price}¢ on {ticker}.\n\
+             The contract expires in {expiry:.1} minutes.\n\n\
+             ## CURRENT MARKET\n{market}\n\n\
+             ## ORDERBOOK\nYes bids: {yes_ob}\nNo bids: {no_ob}{btc}\n\n\
+             ## DECISION\n\
+             Should you SELL your {side} contracts to lock in profit/cut loss, or HOLD to expiry?\n\
+             If SELL, set max_price_cents to the price you'd sell your {side} at (look at the {side} bid side of the orderbook).\n\
+             Respond with JSON: {{\"action\": \"SELL\" or \"PASS\", \"shares\": {shares}, \"max_price_cents\": <sell price for your {side} contracts>, \"reasoning\": \"...\"}}\n\
+             SELL = close now. PASS = hold to expiry.",
+            shares = position_shares,
+            side = entry_side.to_uppercase(),
+            price = entry_price,
+            ticker = ctx.market.ticker,
+            expiry = ctx.market.minutes_to_expiry,
+            market = format_market(&ctx.market),
+            yes_ob = format_ob_side(&ctx.orderbook.yes),
+            no_ob = format_ob_side(&ctx.orderbook.no),
+            btc = btc_section,
+        );
+
+        let content = self.call_model(
+            "anthropic/claude-opus-4-6",
+            &exit_prompt,
+            800,
+        ).await?;
+
+        parse_decision(&content)
+    }
+}
+
+impl OpenRouterClient {
+    async fn call_model(&self, model: &str, prompt: &str, max_tokens: u32) -> Result<String> {
         let body = serde_json::json!({
-            "model": "anthropic/claude-opus-4-6",
-            "max_tokens": 1200,
+            "model": model,
+            "max_tokens": max_tokens,
             "temperature": 0.2,
             "messages": [{"role": "user", "content": prompt}]
         });
@@ -59,11 +116,13 @@ impl Brain for OpenRouterClient {
             .json::<serde_json::Value>()
             .await?;
 
-        let content = resp["choices"][0]["message"]["content"]
+        let msg = &resp["choices"][0]["message"];
+        msg["content"]
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("No content in OpenRouter response"))?;
-
-        parse_decision(content)
+            .filter(|s| !s.is_empty())
+            .or_else(|| msg["reasoning"].as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("No content in OpenRouter response: {}", resp))
     }
 }
 
@@ -172,5 +231,17 @@ fn parse_decision(raw: &str) -> Result<TradeDecision> {
         });
     };
 
-    serde_json::from_str(json_str.trim()).map_err(Into::into)
+    match serde_json::from_str(json_str.trim()) {
+        Ok(decision) => Ok(decision),
+        Err(e) => {
+            tracing::warn!("JSON parse failed ({}), defaulting to PASS", e);
+            Ok(TradeDecision {
+                action: Action::Pass,
+                side: None,
+                shares: None,
+                max_price_cents: None,
+                reasoning: "Failed to parse AI response".into(),
+            })
+        }
+    }
 }

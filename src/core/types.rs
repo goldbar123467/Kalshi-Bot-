@@ -16,6 +16,7 @@ pub struct TradeDecision {
 pub enum Action {
     Buy,
     Pass,
+    Sell,
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
@@ -92,6 +93,12 @@ pub struct PriceSnapshot {
 
 // ── Orders & Positions ──
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum OrderAction {
+    Buy,
+    Sell,
+}
+
 #[derive(Debug)]
 pub struct OrderResult {
     pub order_id: String,
@@ -101,6 +108,7 @@ pub struct OrderResult {
 #[derive(Debug)]
 pub struct OrderRequest {
     pub ticker: String,
+    pub action: OrderAction,
     pub side: Side,
     pub shares: u32,
     pub price_cents: u32,
@@ -180,6 +188,7 @@ pub struct Config {
     pub max_consecutive_losses: u32,
     pub min_balance_cents: u64,
     pub min_minutes_to_expiry: f64,
+    pub stop_loss_pct: f64,
     pub paper_trade: bool,
     pub confirm_live: bool,
     pub series_ticker: String,
@@ -202,6 +211,7 @@ impl Config {
             max_consecutive_losses: 7,
             min_balance_cents: 500,
             min_minutes_to_expiry: 2.0,
+            stop_loss_pct: 0.20,
             paper_trade: std::env::var("PAPER_TRADE")
                 .map(|v| v != "false")
                 .unwrap_or(true),

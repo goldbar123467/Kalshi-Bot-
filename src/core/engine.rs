@@ -110,11 +110,75 @@ pub async fn run_cycle(
     let shares = decision.shares.unwrap_or(1).min(config.max_shares);
     let price = decision.max_price_cents.unwrap_or(50).clamp(1, 99);
 
-    // 8. FINAL POSITION CHECK — only block if position is on THIS market
+    // 8. POSITION CHECK — if holding, ask Brain to sell or hold
     let fresh_positions = exchange.positions().await?;
-    if fresh_positions.iter().any(|p| p.ticker == market.ticker) {
-        tracing::warn!("Position on {} — aborting order", market.ticker);
-        return Ok(());
+    if let Some(pos) = fresh_positions.iter().find(|p| p.ticker == market.ticker) {
+        // Find the entry row to know our cost basis
+        let entry = ledger.iter().rev().find(|r| r.ticker == market.ticker && r.result == "pending");
+        let entry_price = entry.map(|e| e.price).unwrap_or(50);
+        let entry_side = entry.map(|e| e.side.clone()).unwrap_or_else(|| {
+            // Fall back to actual position side from Kalshi
+            match pos.side { Side::Yes => "yes".into(), Side::No => "no".into() }
+        });
+
+        // Ask brain: sell or hold?
+        let exit_decision = brain.decide_exit(
+            &context,
+            &entry_side,
+            entry_price,
+            pos.count,
+        ).await?;
+
+        if exit_decision.action == Action::Sell {
+            let exit_price = exit_decision.max_price_cents.unwrap_or(50).clamp(1, 99);
+            let exit_shares = exit_decision.shares.unwrap_or(pos.count);
+            let sell_side = if entry_side == "yes" { Side::Yes } else { Side::No };
+
+            // P&L = sell_price - entry_price per share
+            let pnl_per_share = exit_price as i64 - entry_price as i64;
+            let total_pnl = pnl_per_share * exit_shares as i64;
+
+            if config.paper_trade {
+                let paper_id = format!("paper-exit-{}", chrono::Utc::now().timestamp_millis());
+                tracing::info!(
+                    "PAPER EXIT: sell {:?} {}x @ {}¢ (entry {}¢) P&L: {}¢ | {} ({})",
+                    sell_side, exit_shares, exit_price, entry_price, total_pnl, market.ticker, paper_id
+                );
+            } else {
+                let order_result = exchange
+                    .place_order(&OrderRequest {
+                        ticker: market.ticker.clone(),
+                        action: OrderAction::Sell,
+                        side: sell_side.clone(),
+                        shares: exit_shares,
+                        price_cents: exit_price,
+                    })
+                    .await;
+
+                match order_result {
+                    Ok(result) => {
+                        tracing::info!(
+                            "LIVE EXIT: sell {:?} {}x @ {}¢ (entry {}¢) P&L: {}¢ | {} (order {} status: {})",
+                            sell_side, exit_shares, exit_price, entry_price, total_pnl,
+                            market.ticker, result.order_id, result.status
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("Exit order failed: {} — holding position", e);
+                        return Ok(());
+                    }
+                }
+            }
+
+            // Mark the original entry as exited with P&L
+            let current_stats = stats::compute(&ledger);
+            storage::exit_trade(&market.ticker, total_pnl, current_stats.total_pnl_cents)?;
+            tracing::info!("EXIT: {} | {}", exit_decision.reasoning, market.ticker);
+            return Ok(());
+        } else {
+            tracing::info!("HOLD: {} | {}", exit_decision.reasoning, market.ticker);
+            return Ok(());
+        }
     }
 
     // 9. EXECUTE — order FIRST, ledger SECOND
@@ -145,6 +209,7 @@ pub async fn run_cycle(
         let order_result = exchange
             .place_order(&OrderRequest {
                 ticker: market.ticker.clone(),
+                action: OrderAction::Buy,
                 side: side.clone(),
                 shares,
                 price_cents: price,

@@ -69,6 +69,7 @@ pub struct PositionsResponse {
 #[derive(Debug, Deserialize)]
 pub struct KalshiPosition {
     pub ticker: String,
+    pub position: Option<i64>,
     pub market_exposure: Option<i64>,
     pub resting_orders_count: Option<u32>,
 }
