@@ -27,9 +27,9 @@ while true; do
     output=$(./target/release/kalshi-bot 2>&1) || true
     echo "$output" >> "$LOG"
 
-    # Shot 2: only fire if shot 1 entered a position
-    if echo "$output" | grep -qE "LIVE:|PAPER:"; then
-        sleep "$FOLLOWUP"
-        ./target/release/kalshi-bot >> "$LOG" 2>&1 || true
-    fi
+    # Shot 2: disabled — next cycle's shot 1 handles settlement
+    # if echo "$output" | grep -qE "LIVE:|PAPER:"; then
+    #     sleep "$FOLLOWUP"
+    #     ./target/release/kalshi-bot >> "$LOG" 2>&1 || true
+    # fi
 done
