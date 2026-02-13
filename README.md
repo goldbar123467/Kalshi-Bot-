@@ -4,7 +4,7 @@ Autonomous Rust bot that trades BTC 15-minute binary contracts on Kalshi, powere
 
 ## How It Works
 
-Every 45 seconds, the bot:
+Every 5 minutes, the bot:
 
 1. Checks if the previous trade settled and updates the ledger
 2. Runs risk checks (balance floor, daily loss cap, stop loss, streak limit)
@@ -61,7 +61,7 @@ cargo build --release
 ./run.sh
 ```
 
-This runs the bot in a 45-second loop. Paper mode is the default — set `PAPER_TRADE=true` in `.env` (or just don't change it).
+This runs the bot in a 5-minute loop. Paper mode is the default — set `PAPER_TRADE=true` in `.env` (or just don't change it).
 
 ### Live trading (real money)
 
@@ -158,7 +158,7 @@ kalshi-bot/
 │   ├── prompt.md                  # System prompt (you edit, AI reads)
 │   ├── ledger.md                  # Append-only trade log
 │   └── stats.md                   # Computed performance stats
-├── run.sh                         # 45-second loop runner
+├── run.sh                         # 5-minute loop runner
 ├── kalshi-bot.service             # systemd unit file
 └── logs/
     └── cron.log                   # Bot output
@@ -166,7 +166,7 @@ kalshi-bot/
 
 ## Cost
 
-~$0.05 per cycle via OpenRouter. At one cycle every 45 seconds, that's roughly 1,920 cycles/day = ~$96/day if it runs 24/7. In practice it PASSes on many cycles and markets aren't always open, so real cost is lower.
+~$0.05 per cycle via OpenRouter. At one cycle every 5 minutes, that's roughly 288 cycles/day = ~$14/day if it runs 24/7. In practice it PASSes on many cycles and markets aren't always open, so real cost is lower.
 
 ## License
 

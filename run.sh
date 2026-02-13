@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 unset OPENROUTER_API_KEY 2>/dev/null
 
 export RUST_LOG=info
-INTERVAL=45
+INTERVAL=300
 LOG="logs/cron.log"
 
 echo "[$(date -u +%FT%TZ)] Bot loop started (every ${INTERVAL}s)" >> "$LOG"
