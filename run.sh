@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Two-shot pattern: runs twice per 15-min market, then sleeps until the next one.
 #   Shot 1 — :XX:20  → enter a trade if there's edge
-#   Shot 2 — :XX:65  → manage position (sell/hold) 45s later
-# Max 2 API calls per market. Usage: systemd or nohup ./run.sh &
+#   Shot 2 — :XX:65  → manage position (sell/hold) 45s later, ONLY if shot 1 traded
+# Usage: systemd or nohup ./run.sh &
 
 cd "$(dirname "$0")"
 
@@ -23,10 +23,13 @@ while true; do
     sleep_secs=$(( 900 - secs_past ))
     sleep "$sleep_secs"
 
-    # Shot 1: enter trade
-    ./target/release/kalshi-bot >> "$LOG" 2>&1 || true
+    # Shot 1: enter trade (capture output to check if a trade was placed)
+    output=$(./target/release/kalshi-bot 2>&1) || true
+    echo "$output" >> "$LOG"
 
-    # Shot 2: manage position (sell/hold check)
-    sleep "$FOLLOWUP"
-    ./target/release/kalshi-bot >> "$LOG" 2>&1 || true
+    # Shot 2: only fire if shot 1 entered a position
+    if echo "$output" | grep -qE "LIVE:|PAPER:"; then
+        sleep "$FOLLOWUP"
+        ./target/release/kalshi-bot >> "$LOG" 2>&1 || true
+    fi
 done
