@@ -4,7 +4,7 @@ Autonomous Rust bot that trades BTC 15-minute binary contracts on Kalshi, powere
 
 ## How It Works
 
-At 20 seconds past each 15-minute mark (`:00:20`, `:15:20`, `:30:20`, `:45:20`), the bot:
+Twice per 15-minute market (at `:XX:20` to enter, then 45s later to manage the position), the bot:
 
 1. Checks if the previous trade settled and updates the ledger
 2. Runs risk checks (balance floor, daily loss cap, stop loss, streak limit)
@@ -61,7 +61,7 @@ cargo build --release
 ./run.sh
 ```
 
-This syncs to the clock and runs at 20 seconds past each 15-minute mark — right when new markets start forming. Paper mode is the default — set `PAPER_TRADE=true` in `.env` (or just don't change it).
+This runs a two-shot pattern per market: first call at `:XX:20` to enter a trade, second call 45s later to manage the position (sell/hold). Max 2 API calls per market, then sleeps until the next one. Paper mode is the default — set `PAPER_TRADE=true` in `.env` (or just don't change it).
 
 ### Live trading (real money)
 
@@ -158,7 +158,7 @@ kalshi-bot/
 │   ├── prompt.md                  # System prompt (you edit, AI reads)
 │   ├── ledger.md                  # Append-only trade log
 │   └── stats.md                   # Computed performance stats
-├── run.sh                         # Clock-synced loop (every 15 min)
+├── run.sh                         # Two-shot loop (2 calls per market)
 ├── kalshi-bot.service             # systemd unit file
 └── logs/
     └── cron.log                   # Bot output
@@ -166,7 +166,7 @@ kalshi-bot/
 
 ## Cost
 
-~$0.05 per cycle via OpenRouter. At 96 cycles/day (every 15 min), that's ~$5/day. In practice it PASSes on many cycles and markets aren't always open, so real cost is lower.
+~$0.05 per call via OpenRouter. Two-shot pattern = max 2 calls per market, 96 markets/day = ~$10/day ceiling. In practice many second shots PASS quickly, so real cost is closer to $5-7/day.
 
 ## License
 
