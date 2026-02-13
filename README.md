@@ -1,76 +1,19 @@
 # kalshi-bot
 
-Autonomous BTC trading bot for Kalshi's 15-minute binary contracts. Rust cron job that asks Claude whether to buy YES or NO every 15 minutes, places the order, and exits.
+Autonomous Rust bot that trades BTC 15-minute binary contracts on Kalshi, powered by Claude Opus 4.6.
 
 ## How It Works
 
-Every 15 minutes, cron fires a Rust binary that:
+Every 45 seconds, the bot:
 
-1. Cancels any stale resting orders from the previous cycle
-2. Checks if the last trade settled (win/loss) and updates the ledger
-3. Runs deterministic risk checks (balance floor, daily loss cap, streak limit)
-4. Fetches the active BTC Up/Down market from Kalshi
-5. Fetches the orderbook and live BTC price data from Binance
-6. Sends everything to Claude Opus 4.6 — market state, orderbook, BTC momentum, performance stats, trade history
-7. Claude returns BUY (side, shares, price) or PASS with reasoning
-8. Validates and clamps the decision, checks for duplicate positions
-9. Places the order on Kalshi (or logs it in paper mode)
-10. Exits
+1. Checks if the previous trade settled and updates the ledger
+2. Runs risk checks (balance floor, daily loss cap, stop loss, streak limit)
+3. Fetches the active BTC Up/Down market, orderbook, and live BTC price from Binance
+4. Sends everything to Claude Opus 4.6 — market state, orderbook, BTC momentum, performance stats, trade history
+5. Claude returns **BUY** (side, shares, price), **SELL** (early exit), or **PASS** with reasoning
+6. Places the order on Kalshi (or logs it in paper mode)
 
 The AI never writes files. All stats are computed deterministically in Rust from an append-only markdown ledger.
-
-## Architecture
-
-Hexagonal architecture — every external boundary is a swappable trait.
-
-```
-                    ┌─────────────────────────────┐
-                    │         CORE DOMAIN          │
-                    │  (pure Rust, no IO, no deps) │
-                    │                              │
-                    │  • engine.rs  (10-step cycle) │
-                    │  • risk.rs    (limit checks)  │
-                    │  • stats.rs   (ledger math)   │
-                    │  • types.rs   (domain types)  │
-                    └──────────┬──────────────────┘
-                               │ uses traits (ports)
-            ┌──────────────────┼──────────────────────┐
-            │                  │                       │
-    ┌───────▼──────┐   ┌──────▼───────┐   ┌──────────▼────────┐
-    │  Exchange    │   │  Brain       │   │  Notifier         │
-    │  (Kalshi)    │   │  (Claude)    │   │  (Telegram)       │
-    └──────────────┘   └──────────────┘   └───────────────────┘
-```
-
-Swap the exchange, the AI, or the notification layer independently. Core domain is pure functions — unit-testable with zero network.
-
-## Project Structure
-
-```
-kalshi-bot/
-├── src/
-│   ├── main.rs                   # Entry point, config, lockfile
-│   ├── safety.rs                 # Lockfile, startup validation, live-mode gate
-│   ├── core/
-│   │   ├── engine.rs             # The 10-step trading cycle
-│   │   ├── risk.rs               # Pure risk checks
-│   │   ├── stats.rs              # Compute stats from ledger
-│   │   └── types.rs              # All domain types
-│   ├── ports/
-│   │   ├── exchange.rs           # Exchange trait
-│   │   ├── brain.rs              # Brain trait
-│   │   └── notifier.rs           # Notifier trait
-│   └── adapters/
-│       ├── kalshi/               # Kalshi API + RSA-PSS auth
-│       ├── openrouter.rs         # Claude via OpenRouter
-│       └── telegram.rs           # Telegram alerts
-├── brain/
-│   ├── prompt.md                 # System prompt (you edit, AI reads)
-│   ├── ledger.md                 # Append-only trade log
-│   └── stats.md                  # Computed performance stats
-└── logs/
-    └── cron.log                  # Cron output
-```
 
 ## Setup
 
@@ -81,7 +24,7 @@ kalshi-bot/
 - OpenRouter API key
 - (Optional) Telegram bot token for alerts
 
-### Environment Variables
+### Configure
 
 Create a `.env` file:
 
@@ -92,84 +35,138 @@ KALSHI_PRIVATE_KEY_PATH=./kalshi_private_key.pem
 KALSHI_BASE_URL=https://api.elections.kalshi.com
 KALSHI_SERIES_TICKER=KXBTC15M
 
-# AI
+# AI (OpenRouter)
 OPENROUTER_API_KEY=sk-or-v1-...
 
-# Safety
+# Telegram (optional)
+# TELEGRAM_BOT_TOKEN=
+# TELEGRAM_CHAT_ID=
+
+# Safety — paper trading by default
 PAPER_TRADE=true
 CONFIRM_LIVE=false
 ```
 
-### Build & Run
+### Build
 
 ```bash
 cargo build --release
-
-# Paper trading (default — no real orders)
-./target/release/kalshi-bot
-
-# Live trading (real money)
-PAPER_TRADE=false CONFIRM_LIVE=true ./target/release/kalshi-bot
 ```
 
-### Cron Setup
+## Running
 
-Run every 15 minutes, offset by 1 minute to avoid market open/close edges:
+### Paper trading (no real orders)
 
 ```bash
-crontab -e
+./run.sh
 ```
 
+This runs the bot in a 45-second loop. Paper mode is the default — set `PAPER_TRADE=true` in `.env` (or just don't change it).
+
+### Live trading (real money)
+
+Set both flags in `.env`:
+
+```bash
+PAPER_TRADE=false
+CONFIRM_LIVE=true
 ```
-1,16,31,46 * * * * cd /path/to/kalshi-bot && ./target/release/kalshi-bot >> logs/cron.log 2>&1
+
+Then start the loop:
+
+```bash
+./run.sh
+```
+
+### systemd (run forever)
+
+Copy the included service file and enable it:
+
+```bash
+sudo cp kalshi-bot.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now kalshi-bot
+```
+
+Check status:
+
+```bash
+sudo systemctl status kalshi-bot
+journalctl -u kalshi-bot -f
 ```
 
 ## Risk Limits
 
 All hardcoded — no config knobs to accidentally blow up:
 
-| Limit | Default | What It Does |
-|-------|---------|--------------|
-| Max shares per trade | 2 | Position size cap |
+| Limit | Value | What It Does |
+|-------|-------|--------------|
+| Max shares per trade | 5 | Position size cap |
 | Max daily loss | $10 | Stop trading for the day |
+| Stop loss | 20% | Halt if total P&L drops 20% of starting balance |
 | Max consecutive losses | 7 | Stop trading until a win |
 | Min balance | $5 | Don't trade below this floor |
 | Min time to expiry | 2 min | Don't enter dying markets |
 
 ## How the AI Decides
 
-Claude receives a full context package each cycle:
+Claude gets a full context package each cycle:
 
 - **Market data**: yes/no bid/ask, last price, volume, open interest
 - **Orderbook**: full depth on both sides
-- **BTC price data**: spot, 15m/1h momentum, SMA, volatility, recent candles (from Binance)
+- **BTC price data**: spot, 15m/1h momentum, SMA, volatility, recent candles (from Binance US)
 - **Performance**: win rate, streak, P&L, max drawdown
 - **Trade history**: last 20 trades with outcomes
 
-The system prompt (`brain/prompt.md`) teaches Claude to:
+The system prompt (`brain/prompt.md`) teaches Claude to evaluate asymmetric risk/reward, find mispricings between BTC momentum and Kalshi implied probability, and size positions based on edge magnitude (5-9pt edge = 1-2 shares, 10-15pt = 3, 15+ = 4-5).
 
-- Evaluate asymmetric risk/reward on both sides of every contract
-- Lower conviction threshold for cheap options (<30¢) where R/R is favorable
-- Set limit order prices relative to the bid/ask spread
-- Size positions based on edge magnitude (5–9pt → 1 share, 10+ → 2 shares)
-- PASS only when there's no edge AND no asymmetric opportunity
+One Opus call per cycle. If Claude returns garbage JSON, the bot does nothing.
 
-## Safety
+## Early Exit
 
-- **Lockfile** (`/tmp/kalshi-bot.lock`): PID-based, prevents double execution from cron overlap
-- **Live mode gate**: `PAPER_TRADE=true` by default. Must explicitly set both `PAPER_TRADE=false` and `CONFIRM_LIVE=true`
-- **Order-first writes**: Order placed on Kalshi before ledger write. If the order fails, ledger stays clean — no phantom trades
-- **Ledger backup**: `brain/ledger.md.bak` created before every write
-- **Atomic stats**: Written to `.tmp` then renamed
-- **Parse failure = PASS**: If Claude returns garbage JSON, the bot does nothing
+If the bot already holds a position, it asks Claude whether to **sell** or **hold**:
 
-## Kalshi Auth
+- **Sell to take profit** — momentum reversing, lock in gains
+- **Sell to cut losses** — momentum flipped, exit at a small loss instead of riding to expiry
+- **Hold** — momentum still supports the position
 
-RSA-PSS with SHA-256, MGF1(SHA-256), salt length 32 bytes. Message format: `{timestamp_ms}{METHOD}{path}`. Supports both PKCS#1 and PKCS#8 PEM key formats.
+Selling means placing a sell order on the same side (not buying the opposite side). This closes the position without extra capital.
+
+## Project Structure
+
+```
+kalshi-bot/
+├── src/
+│   ├── main.rs                    # Entry point, config, lockfile
+│   ├── safety.rs                  # Lockfile, startup validation, live-mode gate
+│   ├── storage.rs                 # Read/write brain/*.md files
+│   ├── core/
+│   │   ├── engine.rs              # The trading cycle
+│   │   ├── risk.rs                # Pure risk checks
+│   │   ├── stats.rs               # Compute stats from ledger
+│   │   ├── indicators.rs          # BTC technical indicators
+│   │   └── types.rs               # All domain types
+│   ├── ports/
+│   │   ├── exchange.rs            # Exchange trait
+│   │   ├── brain.rs               # Brain trait
+│   │   └── price_feed.rs          # Price feed trait
+│   └── adapters/
+│       ├── kalshi/                 # Kalshi API + RSA-PSS auth
+│       ├── openrouter.rs          # Claude via OpenRouter
+│       └── binance.rs             # BTC price from Binance US
+├── brain/
+│   ├── prompt.md                  # System prompt (you edit, AI reads)
+│   ├── ledger.md                  # Append-only trade log
+│   └── stats.md                   # Computed performance stats
+├── run.sh                         # 45-second loop runner
+├── kalshi-bot.service             # systemd unit file
+└── logs/
+    └── cron.log                   # Bot output
+```
 
 ## Cost
 
-~$0.05 per cycle via OpenRouter → ~$5/day at 96 cycles.
+~$0.05 per cycle via OpenRouter. At one cycle every 45 seconds, that's roughly 1,920 cycles/day = ~$96/day if it runs 24/7. In practice it PASSes on many cycles and markets aren't always open, so real cost is lower.
 
 ## License
 
